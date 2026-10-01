@@ -1,6 +1,0 @@
-.venv/
-.web/
-__pycache__/
-*.pyc
-saved_library/
-.states/
