@@ -13,13 +13,10 @@ import uuid
 from bs4 import BeautifulSoup
 from docx import Document as WordDocument
 from ebooklib import ITEM_DOCUMENT, epub
-from langdetect import DetectorFactory, detect_langs
+import httpx
 import markdown
 from pypdf import PdfReader
 import reflex as rx
-import requests
-
-DetectorFactory.seed = 0
 
 STORAGE_DIR = Path("saved_library")
 DATA_FILE = STORAGE_DIR / "library.json"
@@ -57,74 +54,54 @@ class DocumentData(TypedDict):
     detected_language_name: str
     detection_error: str
 
-def _detect_language(text: str) -> tuple[str, str, str]:
-    sample = text.strip()[:2000]
-    if len("".join(sample.split())) < 8:
-        return ("auto", "Auto Detect", "")
-    try:
-        guesses = detect_langs(sample)
-        if guesses and guesses[0].prob >= 0.70:
-            detected = guesses[0].lang.lower()
-            match = next((item for item in LANGUAGES if item["code"].lower() == detected), None)
-            if match:
-                return match["code"], match["name"], ""
-    except Exception:
-        pass
-    return ("auto", "Auto Detect", "")
+# Reusable high-speed async HTTP client with pooling
+_HTTP_CLIENT = httpx.AsyncClient(
+    timeout=5.0,
+    headers={
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    },
+    follow_redirects=True,
+    limits=httpx.Limits(max_keepalive_connections=20, max_connections=40)
+)
 
-def _translate_single_text(text: str, source: str, target: str) -> str:
-    if not text.strip():
+async def _fast_google_translate(text: str, target: str) -> str:
+    """Sub-second direct translation using Google's public translation endpoint."""
+    clean = text.strip()
+    if not clean:
         return ""
 
-    src = "auto" if not source or source == "auto" else source
+    url = "https://translate.googleapis.com/translate_a/single"
+    params = {
+        "client": "gtx",
+        "sl": "auto",
+        "tl": target,
+        "dt": "t",
+        "q": clean,
+    }
 
-    # 1. Google Translate Mobile Client
     try:
-        url = "https://translate.googleapis.com/translate_a/single"
-        params = {
-            "client": "gtx",
-            "sl": src,
-            "tl": target,
-            "dt": "t",
-            "q": text.strip()
-        }
-        headers = {
-            "User-Agent": "AndroidTranslate/5.3.0.RC02.130475354-53000263 5.1 phone TRANSLATE_OPM5_TEST_1"
-        }
-        res = requests.get(url, params=params, headers=headers, timeout=12)
+        res = await _HTTP_CLIENT.get(url, params=params)
         if res.status_code == 200:
             data = res.json()
             if data and isinstance(data, list) and data[0]:
-                translated = "".join(part[0] for part in data[0] if part and part[0])
-                if translated.strip():
-                    return translated.strip()
+                out = "".join(part[0] for part in data[0] if part and part[0])
+                if out.strip():
+                    return out.strip()
     except Exception as e:
-        print(f"[Folio Translation] Primary engine error: {e}")
+        print(f"[FastTranslate Error]: {e}")
 
-    # 2. Lingva Translate Mirror
+    # Fallback to simple web dictionary translate if primary errors
     try:
-        url = f"https://lingva.ml/api/v1/{src}/{target}/{urllib.parse.quote(text.strip())}"
-        res = requests.get(url, timeout=10)
+        url_dict = f"https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl=auto&tl={target}&q={urllib.parse.quote(clean)}"
+        res = await _HTTP_CLIENT.get(url_dict)
         if res.status_code == 200:
             data = res.json()
-            if "translation" in data and data["translation"].strip():
-                return data["translation"].strip()
-    except Exception as e:
-        print(f"[Folio Translation] Lingva mirror error: {e}")
+            if isinstance(data, list) and len(data) > 0:
+                return data[0] if isinstance(data[0], str) else data[0][0]
+    except Exception:
+        pass
 
-    # 3. MyMemory fallback
-    try:
-        pair = f"{'en' if src == 'auto' else src}|{target}"
-        url = f"https://api.mymemory.translated.net/get?q={urllib.parse.quote(text.strip()[:450])}&langpair={pair}"
-        res = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
-        if res.status_code == 200:
-            data = res.json()
-            if data.get("responseStatus") == 200:
-                return html.unescape(data["responseData"]["translatedText"]).strip()
-    except Exception as e:
-        print(f"[Folio Translation] MyMemory error: {e}")
-
-    return f"[Translation temporarily rate-limited. Please wait a few seconds.]"
+    return clean
 
 def _normalize(text: str) -> str:
     text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\x00", "")
@@ -235,8 +212,8 @@ class ReaderState(rx.State):
         return next(
             (doc for doc in self.documents if doc["id"] == self.active_id),
             {"id": "", "title": "", "filename": "", "format": "", "paragraphs": [], "page_data": [],
-             "page_kind": "estimated", "words": 0, "pages": 0, "minutes": 0, "detected_language": "",
-             "detected_language_name": "Not detected", "detection_error": ""}
+             "page_kind": "estimated", "words": 0, "pages": 0, "minutes": 0, "detected_language": "auto",
+             "detected_language_name": "Auto Detect", "detection_error": ""}
         )
 
     @rx.var
@@ -288,7 +265,9 @@ class ReaderState(rx.State):
         if not files:
             return
         self.is_loading = True
+        self.error_message = ""
         yield
+
         for file in files:
             name = Path(file.filename or "file").name
             suffix = Path(name).suffix.lower()
@@ -296,9 +275,7 @@ class ReaderState(rx.State):
                 data = await file.read()
                 pages, kind = _extract(data, suffix)
                 paras = [p for page in pages for p in page]
-                txt = "\n\n".join(paras)
-                code, lang_name, err = _detect_language(txt)
-                words = len(txt.split())
+                words = len("\n\n".join(paras).split())
                 doc: DocumentData = {
                     "id": str(uuid.uuid4()),
                     "title": Path(name).stem.replace("_", " ").title(),
@@ -310,14 +287,16 @@ class ReaderState(rx.State):
                     "words": words,
                     "pages": len(pages),
                     "minutes": max(1, math.ceil(words / 220)),
-                    "detected_language": code,
-                    "detected_language_name": lang_name,
-                    "detection_error": err,
+                    "detected_language": "auto",
+                    "detected_language_name": "Auto Detect",
+                    "detection_error": "",
                 }
                 self.documents.append(doc)
                 self.select_document(doc["id"])
             except Exception as e:
                 self.error_message = f"{name}: {str(e)}"
+                print(f"[Upload Error]: {e}")
+
         self._persist()
         self.is_loading = False
         yield rx.clear_selected_files("documents")
@@ -335,7 +314,6 @@ class ReaderState(rx.State):
         pages = _paginate(text)
         paras = [p for page in pages for p in page]
         words = len(text.split())
-        code, lang_name, err = _detect_language(text)
 
         for i, doc in enumerate(self.documents):
             if doc["id"] == self.editing_id:
@@ -346,9 +324,9 @@ class ReaderState(rx.State):
                     "words": words,
                     "pages": len(pages),
                     "minutes": max(1, math.ceil(words / 220)),
-                    "detected_language": code,
-                    "detected_language_name": lang_name,
-                    "detection_error": err,
+                    "detected_language": "auto",
+                    "detected_language_name": "Auto Detect",
+                    "detection_error": "",
                 })
                 break
         self._persist()
@@ -361,30 +339,28 @@ class ReaderState(rx.State):
     def set_target_language(self, code: str):
         self.target_language = code
 
+    # === Lightning-Fast Direct Translation ===
     async def translate_selected_passage(self):
         paras = self.active_document["paragraphs"]
         if self.selected_passage < 0 or self.selected_passage >= len(paras):
-            self.translation_status = "⚠️ Please click on a paragraph on the left first."
+            self.translation_status = "⚠️ Click a passage on the left to select it."
             return
 
         self.translation_loading = True
-        self.translation_status = f"Translating Passage {self.selected_passage + 1} to {self.target_language}..."
+        self.translation_status = f"Translating Passage {self.selected_passage + 1}..."
         yield
 
-        source = self.active_document["detected_language"] or "auto"
         target = self.target_language
         text = paras[self.selected_passage]
 
-        print(f"[Folio] Translating passage {self.selected_passage + 1} into {target}...")
-        res = await asyncio.to_thread(_translate_single_text, text, source, target)
+        translated = await _fast_google_translate(text, target)
 
-        key = f"{self.active_id}:{self.selected_passage}"
         new_cache = dict(self.translations_cache)
-        new_cache[key] = res
+        new_cache[f"{self.active_id}:{self.selected_passage}"] = translated
         self.translations_cache = new_cache
 
         self.translation_loading = False
-        self.translation_status = "✅ Passage translated."
+        self.translation_status = "✅ Done."
 
     async def translate_entire_page(self):
         paras = self.active_document["paragraphs"]
@@ -392,44 +368,38 @@ class ReaderState(rx.State):
             return
 
         self.translation_loading = True
-        self.translation_status = f"Translating page to {self.target_language} in one batch..."
+        self.translation_status = f"Translating current page..."
         yield
 
-        source = self.active_document["detected_language"] or "auto"
         target = self.target_language
         start_idx = self.page_start
         end_idx = min(len(paras), start_idx + len(self.visible_paragraphs))
 
-        page_paras = paras[start_idx:end_idx]
-        if not page_paras:
-            self.translation_loading = False
-            return
+        page_paras = [paras[i] for i in range(start_idx, end_idx)]
+        indices = list(range(start_idx, end_idx))
 
-        delimiter = "\n---FL_SEP---\n"
-        combined_text = delimiter.join(page_paras)
+        # Join with delimiter for single super-fast request
+        delimiter = "\n\n§§§\n\n"
+        combined = delimiter.join(page_paras)
 
-        print(f"[Folio] Batch translating page ({len(page_paras)} passages) into {target}...")
-        combined_translation = await asyncio.to_thread(_translate_single_text, combined_text, source, target)
-
-        translated_parts = combined_translation.split("---FL_SEP---")
+        result = await _fast_google_translate(combined, target)
+        parts = [p.strip() for p in result.split("§§§")]
 
         new_cache = dict(self.translations_cache)
-        for offset, part in enumerate(translated_parts):
-            target_idx = start_idx + offset
-            if target_idx < end_idx:
-                new_cache[f"{self.active_id}:{target_idx}"] = part.strip()
 
-        if len(translated_parts) != len(page_paras):
-            for i in range(start_idx, end_idx):
-                res = await asyncio.to_thread(_translate_single_text, paras[i], source, target)
-                new_cache[f"{self.active_id}:{i}"] = res
-                self.translations_cache = dict(new_cache)
-                yield
-                await asyncio.sleep(0.6)
+        if len(parts) == len(page_paras):
+            for idx, text in zip(indices, parts):
+                new_cache[f"{self.active_id}:{idx}"] = text
+        else:
+            # Fallback fast simultaneous tasks
+            tasks = [_fast_google_translate(p, target) for p in page_paras]
+            results = await asyncio.gather(*tasks)
+            for idx, text in zip(indices, results):
+                new_cache[f"{self.active_id}:{idx}"] = text
 
-        self.translations_cache = dict(new_cache)
+        self.translations_cache = new_cache
         self.translation_loading = False
-        self.translation_status = "✅ Page translation complete."
+        self.translation_status = "✅ Page translated."
 
     def decrease_font(self): self.font_size = max(14, self.font_size - 1)
     def increase_font(self): self.font_size = min(26, self.font_size + 1)
