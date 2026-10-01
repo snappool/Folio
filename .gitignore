@@ -1,6 +1,9 @@
+.venv/
+.web/
 __pycache__/
-.states
-.web
+*.pyc
 *.py[cod]
 *.db
+saved_library/
+.states/
 assets/external/
