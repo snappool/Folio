@@ -244,31 +244,33 @@ def split_reading_desk() -> rx.Component:
                 ),
                 class_name="flex items-center gap-2",
             ),
-            rx.el.div(
-                rx.el.button(
-                    rx.icon("text-select", class_name="h-4 w-4 mr-1"),
-                    "Translate Selected Passage",
-                    on_click=ReaderState.translate_selected_passage,
-                    disabled=ReaderState.translation_loading,
-                    class_name=rx.cond(
-                        ReaderState.is_dark,
-                        "bg-neutral-900 border border-[#3C7771] text-[#4DA097] px-3 py-1.5 text-xs font-semibold rounded hover:bg-neutral-800 flex items-center cursor-pointer disabled:opacity-40",
-                        "bg-white border border-[#3C7771] text-[#3C7771] px-3 py-1.5 text-xs font-semibold rounded hover:bg-[#3C7771]/10 flex items-center cursor-pointer disabled:opacity-40",
-                    ),
+        
+        rx.el.div(
+            rx.el.button(
+                "Previous Page",
+                on_click=lambda: ReaderState.change_page(-1),
+                disabled=ReaderState.current_page <= 0,
+                class_name=rx.cond(
+                    ReaderState.is_dark,
+                    "border border-neutral-700 px-4 py-2 text-xs font-semibold rounded bg-neutral-900 disabled:opacity-40 cursor-pointer",
+                    "border border-[#CBD5CA] px-4 py-2 text-xs font-semibold rounded bg-white disabled:opacity-40 cursor-pointer",
                 ),
-                rx.el.button(
-                    rx.icon("book-open", class_name="h-4 w-4 mr-1"),
-                    "Translate This Page",
-                    on_click=ReaderState.translate_entire_page,
-                    disabled=ReaderState.translation_loading,
-                    class_name="bg-[#3C7771] text-white px-3 py-1.5 text-xs font-semibold rounded hover:bg-[#2E605C] flex items-center cursor-pointer disabled:opacity-40",
+            ),
+            rx.el.span(f"Page {ReaderState.current_page + 1} of {ReaderState.active_document['pages']}", class_name="text-xs opacity-60"),
+            rx.el.button(
+                "Next Page",
+                on_click=lambda: ReaderState.change_page(1),
+                disabled=ReaderState.current_page + 1 >= ReaderState.active_document["pages"],
+                class_name=rx.cond(
+                    ReaderState.is_dark,
+                    "border border-neutral-700 px-4 py-2 text-xs font-semibold rounded bg-neutral-900 disabled:opacity-40 cursor-pointer",
+                    "border border-[#CBD5CA] px-4 py-2 text-xs font-semibold rounded bg-white disabled:opacity-40 cursor-pointer",
                 ),
-                class_name="flex items-center gap-3",
             ),
             class_name=rx.cond(
                 ReaderState.is_dark,
-                "flex justify-between items-center p-3 bg-neutral-900 border border-neutral-800 rounded mb-3",
-                "flex justify-between items-center p-3 bg-[#FCFAF5] border border-[#CBD5CA] rounded mb-3",
+                "flex justify-between items-center mt-4 pt-3 pb-12 border-t border-neutral-800", # <-- added pb-12 here
+                "flex justify-between items-center mt-4 pt-3 pb-12 border-t border-[#D9DDD4]",  # <-- added pb-12 here
             ),
         ),
 
