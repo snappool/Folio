@@ -20,6 +20,7 @@ import reflex as rx
 
 STORAGE_DIR = Path("saved_library")
 DATA_FILE = STORAGE_DIR / "library.json"
+CACHE_FILE = STORAGE_DIR / "translations_cache.json"
 
 LANGUAGES = [
     {"code": "ml", "name": "Malayalam"},
@@ -54,9 +55,8 @@ class DocumentData(TypedDict):
     detected_language_name: str
     detection_error: str
 
-# Reusable high-speed async HTTP client with pooling
 _HTTP_CLIENT = httpx.AsyncClient(
-    timeout=5.0,
+    timeout=6.0,
     headers={
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
     },
@@ -65,7 +65,6 @@ _HTTP_CLIENT = httpx.AsyncClient(
 )
 
 async def _fast_google_translate(text: str, target: str) -> str:
-    """Sub-second direct translation using Google's public translation endpoint."""
     clean = text.strip()
     if not clean:
         return ""
@@ -90,7 +89,6 @@ async def _fast_google_translate(text: str, target: str) -> str:
     except Exception as e:
         print(f"[FastTranslate Error]: {e}")
 
-    # Fallback to simple web dictionary translate if primary errors
     try:
         url_dict = f"https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl=auto&tl={target}&q={urllib.parse.quote(clean)}"
         res = await _HTTP_CLIENT.get(url_dict)
@@ -184,6 +182,8 @@ class ReaderState(rx.State):
     languages: list[dict[str, str]] = LANGUAGES
     target_language: str = "ml"
     selected_passage: int = -1
+    is_dark: bool = False
+    show_reader_window: bool = False
     translations_cache: dict[str, str] = {}
     translation_loading: bool = False
     translation_status: str = ""
@@ -196,6 +196,8 @@ class ReaderState(rx.State):
         STORAGE_DIR.mkdir(parents=True, exist_ok=True)
         with open(DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(self.documents, f, ensure_ascii=False, indent=2)
+        with open(CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(self.translations_cache, f, ensure_ascii=False, indent=2)
 
     def load_library(self):
         if DATA_FILE.exists():
@@ -206,6 +208,12 @@ class ReaderState(rx.State):
                         self.select_document(self.documents[0]["id"])
             except Exception:
                 self.documents = []
+        if CACHE_FILE.exists():
+            try:
+                with open(CACHE_FILE, "r", encoding="utf-8") as f:
+                    self.translations_cache = json.load(f)
+            except Exception:
+                self.translations_cache = {}
 
     @rx.var
     def active_document(self) -> DocumentData:
@@ -235,6 +243,51 @@ class ReaderState(rx.State):
             key = f"{doc_id}:{start + idx}"
             res.append(self.translations_cache.get(key, ""))
         return res
+
+    @rx.var
+    def full_translated_document_text(self) -> str:
+        doc = self.active_document
+        paras = doc["paragraphs"]
+        if not paras:
+            return ""
+        out = []
+        for idx, p in enumerate(paras):
+            key = f"{doc['id']}:{idx}"
+            trans = self.translations_cache.get(key)
+            out.append(trans.strip() if trans and trans.strip() else f"[{p}]")
+        return "\n\n".join(out)
+
+    def toggle_theme(self):
+        self.is_dark = not self.is_dark
+
+    def toggle_reader_window(self):
+        self.show_reader_window = not self.show_reader_window
+
+    def speak_text(self, text: str):
+        if not text.strip():
+            return
+        # Escape quotes/newlines for client-side JS evaluation
+        safe_text = json.dumps(text.strip())
+        target_lang = self.target_language
+        lang_tag = f"{target_lang}-IN" if target_lang in ["ml", "hi", "ta", "te", "kn"] else target_lang
+        script = f"""
+        if ('speechSynthesis' in window) {{
+            window.speechSynthesis.cancel();
+            const utterance = new SpeechSynthesisUtterance({safe_text});
+            utterance.lang = '{lang_tag}';
+            utterance.rate = 0.95;
+            window.speechSynthesis.speak(utterance);
+        }}
+        """
+        return rx.call_script(script)
+
+    def export_translation_from_reader(self):
+        doc = self.active_document
+        text = self.full_translated_document_text
+        if not text:
+            return
+        filename = f"{doc['title'].replace(' ', '_')}_{self.target_language}.txt"
+        return rx.download(data=text, filename=filename)
 
     def change_page(self, direction: int):
         nxt = self.current_page + direction
@@ -339,7 +392,6 @@ class ReaderState(rx.State):
     def set_target_language(self, code: str):
         self.target_language = code
 
-    # === Lightning-Fast Direct Translation ===
     async def translate_selected_passage(self):
         paras = self.active_document["paragraphs"]
         if self.selected_passage < 0 or self.selected_passage >= len(paras):
@@ -358,6 +410,7 @@ class ReaderState(rx.State):
         new_cache = dict(self.translations_cache)
         new_cache[f"{self.active_id}:{self.selected_passage}"] = translated
         self.translations_cache = new_cache
+        self._persist()
 
         self.translation_loading = False
         self.translation_status = "✅ Done."
@@ -378,7 +431,6 @@ class ReaderState(rx.State):
         page_paras = [paras[i] for i in range(start_idx, end_idx)]
         indices = list(range(start_idx, end_idx))
 
-        # Join with delimiter for single super-fast request
         delimiter = "\n\n§§§\n\n"
         combined = delimiter.join(page_paras)
 
@@ -391,18 +443,18 @@ class ReaderState(rx.State):
             for idx, text in zip(indices, parts):
                 new_cache[f"{self.active_id}:{idx}"] = text
         else:
-            # Fallback fast simultaneous tasks
             tasks = [_fast_google_translate(p, target) for p in page_paras]
             results = await asyncio.gather(*tasks)
             for idx, text in zip(indices, results):
                 new_cache[f"{self.active_id}:{idx}"] = text
 
         self.translations_cache = new_cache
+        self._persist()
         self.translation_loading = False
         self.translation_status = "✅ Page translated."
 
     def decrease_font(self): self.font_size = max(14, self.font_size - 1)
-    def increase_font(self): self.font_size = min(26, self.font_size + 1)
+    def increase_font(self): self.font_size = min(28, self.font_size + 1)
     def toggle_width(self):
         self.reading_width = "Wide" if self.reading_width == "Comfortable" else "Comfortable"
     def cycle_spacing(self):
