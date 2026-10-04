@@ -1,28 +1,32 @@
 import reflex as rx
 from folio.state import ReaderState
 
-def brand() -> rx.Component:
+def brand(compact: bool = False) -> rx.Component:
+    """The Folio brand logo."""
     return rx.el.div(
         rx.el.div(
-            rx.icon("book-open", class_name="h-5 w-5 text-white"),
-            class_name="flex h-10 w-10 shrink-0 items-center justify-center rounded-sm bg-[#3C7771]",
+            rx.icon("book-open", class_name="h-4 w-4 sm:h-5 sm:w-5 text-white"),
+            class_name="flex h-8 w-8 sm:h-9 sm:w-9 shrink-0 items-center justify-center rounded-sm bg-[#3C7771] shadow-sm",
         ),
-        rx.el.div(
-            rx.el.p(
-                "Folio",
-                class_name="font-['Cormorant_Garamond'] text-[29px] font-semibold leading-none tracking-tight",
-            ),
-            rx.el.p(
-                "A QUIET PLACE TO READ",
-                class_name="mt-1 text-[9px] font-bold tracking-[0.19em] text-[#3C7771]",
+        rx.cond(
+            not compact,
+            rx.el.div(
+                rx.el.p(
+                    "Folio",
+                    class_name="font-['Cormorant_Garamond'] text-[24px] sm:text-[28px] font-semibold leading-none tracking-tight",
+                ),
+                rx.el.p(
+                    "A QUIET PLACE TO READ",
+                    class_name="mt-0.5 text-[8px] sm:text-[9px] font-bold tracking-[0.19em] text-[#3C7771]",
+                ),
             ),
         ),
-        class_name="flex items-center gap-3",
+        class_name="flex items-center gap-2.5",
     )
 
 def shelf_content() -> rx.Component:
     return rx.el.div(
-        # Feature 3: New Document Button
+        # New Blank Document Button
         rx.el.div(
             rx.el.button(
                 rx.icon("plus", class_name="h-4 w-4 mr-1.5"),
@@ -33,7 +37,7 @@ def shelf_content() -> rx.Component:
             rx.upload.root(
                 rx.el.div(
                     rx.icon("upload", class_name="mb-2 h-5 w-5 text-[#3C7771]"),
-                    rx.el.p("Drop document or browse", class_name="text-xs font-medium"),
+                    rx.el.p("Tap or drop to upload", class_name="text-xs font-semibold"),
                     rx.el.p("PDF · DOCX · EPUB · TXT · MD", class_name="text-[10px] opacity-60 mt-1"),
                     class_name=rx.cond(
                         ReaderState.is_dark,
@@ -42,6 +46,13 @@ def shelf_content() -> rx.Component:
                     ),
                 ),
                 id="documents",
+                accept={
+                    "application/pdf": [".pdf"],
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": [".docx"],
+                    "application/epub+zip": [".epub"],
+                    "text/plain": [".txt"],
+                    "text/markdown": [".md"],
+                },
                 multiple=True,
             ),
             rx.cond(
@@ -103,7 +114,6 @@ def shelf_content() -> rx.Component:
     )
 
 def shelf() -> rx.Component:
-    # Desktop shelf (visible on lg+)
     return rx.el.aside(
         rx.el.div(
             brand(),
@@ -122,7 +132,6 @@ def shelf() -> rx.Component:
     )
 
 def mobile_shelf_drawer() -> rx.Component:
-    # Mobile off-canvas drawer (visible when toggled on mobile)
     return rx.cond(
         ReaderState.mobile_shelf_open,
         rx.el.div(
@@ -149,7 +158,6 @@ def mobile_shelf_drawer() -> rx.Component:
     )
 
 def translated_reader_modal() -> rx.Component:
-    """Dedicated distraction-free reading window for the translated text."""
     return rx.cond(
         ReaderState.show_reader_window,
         rx.el.div(
@@ -158,22 +166,38 @@ def translated_reader_modal() -> rx.Component:
                 rx.el.div(
                     rx.el.div(
                         rx.el.h2(f"{ReaderState.active_document['title']} (Translated)", class_name="text-xl font-bold font-['Cormorant_Garamond']"),
-                        rx.el.p(f"Language: {ReaderState.target_language.upper()} · Distraction-free View", class_name="text-xs opacity-60"),
+                        rx.el.p(f"Target: {ReaderState.target_language.upper()} · Distraction-Free Reading", class_name="text-xs opacity-60"),
                         class_name="flex flex-col",
                     ),
                     rx.el.div(
-                        rx.el.button(
-                            rx.icon("download", class_name="h-4 w-4 mr-1"),
-                            "Export Translation (.txt)",
-                            on_click=ReaderState.export_translation_from_reader,
-                            class_name="bg-[#3C7771] hover:bg-[#2E605C] text-white text-xs px-3 py-1.5 rounded flex items-center font-medium cursor-pointer",
+                        rx.el.div(
+                            rx.el.select(
+                                rx.el.option("Word Document (.docx)", value="docx"),
+                                rx.el.option("Plain Text (.txt)", value="txt"),
+                                rx.el.option("Markdown (.md)", value="md"),
+                                rx.el.option("Print / PDF", value="pdf"),
+                                default_value=ReaderState.export_format_reader,
+                                on_change=ReaderState.set_export_format_reader,
+                                class_name=rx.cond(
+                                    ReaderState.is_dark,
+                                    "text-xs bg-neutral-800 border border-neutral-700 text-white rounded px-2 py-1.5",
+                                    "text-xs bg-white border border-[#CBD5CA] text-neutral-800 rounded px-2 py-1.5",
+                                ),
+                            ),
+                            rx.el.button(
+                                rx.icon("download", class_name="h-4 w-4 mr-1"),
+                                "Export",
+                                on_click=ReaderState.export_translation_from_reader,
+                                class_name="bg-[#3C7771] hover:bg-[#2E605C] text-white text-xs px-3 py-1.5 rounded flex items-center font-medium cursor-pointer shadow-sm",
+                            ),
+                            class_name="flex items-center gap-2",
                         ),
                         rx.el.button(
                             rx.icon("x", class_name="h-5 w-5"),
                             on_click=ReaderState.toggle_reader_window,
-                            class_name="p-1 rounded hover:bg-black/10 dark:hover:bg-white/10",
+                            class_name="p-1 rounded hover:bg-black/10 dark:hover:bg-white/10 cursor-pointer ml-2",
                         ),
-                        class_name="flex items-center gap-3",
+                        class_name="flex items-center flex-wrap gap-2 justify-end",
                     ),
                     class_name=rx.cond(
                         ReaderState.is_dark,
@@ -223,18 +247,25 @@ def translated_reader_modal() -> rx.Component:
 
 def split_reading_desk() -> rx.Component:
     return rx.el.div(
-        # Mobile Top Bar (with Shelf Hamburger & Quick Title)
+        # Top Header Bar: Logo, Title, Controls
         rx.el.div(
-            rx.el.button(
-                rx.icon("menu", class_name="h-5 w-5"),
-                on_click=ReaderState.toggle_mobile_shelf,
-                class_name="lg:hidden p-2 rounded border border-neutral-300 dark:border-neutral-700 cursor-pointer mr-2",
-                title="Open Shelf",
-            ),
             rx.el.div(
-                rx.el.h1(ReaderState.active_document["title"], class_name="text-2xl sm:text-3xl font-['Cormorant_Garamond'] font-semibold truncate"),
-                rx.el.span(f"{ReaderState.active_document['words']} words · Page {ReaderState.current_page + 1} of {ReaderState.active_document['pages']}", class_name="text-xs opacity-60"),
-                class_name="flex flex-col min-w-0 flex-1",
+                rx.el.div(
+                    rx.el.button(
+                        rx.icon("menu", class_name="h-5 w-5"),
+                        on_click=ReaderState.toggle_mobile_shelf,
+                        class_name="lg:hidden p-1.5 rounded border border-neutral-300 dark:border-neutral-700 cursor-pointer mr-2",
+                        title="Open Shelf",
+                    ),
+                    brand(compact=True),
+                    class_name="flex items-center shrink-0 pr-3 border-r border-neutral-300 dark:border-neutral-800 mr-3",
+                ),
+                rx.el.div(
+                    rx.el.h1(ReaderState.active_document["title"], class_name="text-xl sm:text-2xl font-['Cormorant_Garamond'] font-semibold truncate"),
+                    rx.el.span(f"{ReaderState.active_document['words']} words · Page {ReaderState.current_page + 1} of {ReaderState.active_document['pages']}", class_name="text-xs opacity-60"),
+                    class_name="flex flex-col min-w-0 flex-1",
+                ),
+                class_name="flex items-center min-w-0 flex-1",
             ),
             rx.el.div(
                 rx.el.button(
@@ -273,7 +304,7 @@ def split_reading_desk() -> rx.Component:
             ),
         ),
 
-        # Action bar: Target Language & Translation Triggers
+        # Action bar: Target Language & Triggers
         rx.el.div(
             rx.el.div(
                 rx.el.span("Translate to:", class_name="text-xs font-bold opacity-60 hidden sm:inline"),
@@ -317,7 +348,7 @@ def split_reading_desk() -> rx.Component:
             ),
         ),
 
-        # Feature 2: Mobile View Switcher (Original / Translation / Split)
+        # Mobile View Switcher (Original / Translation / Split)
         rx.el.div(
             rx.el.button(
                 "Split View",
@@ -349,7 +380,7 @@ def split_reading_desk() -> rx.Component:
             class_name="lg:hidden flex items-center p-1 rounded border border-neutral-300 dark:border-neutral-800 bg-black/5 dark:bg-white/5 mb-3 gap-1",
         ),
 
-        # Live translation feedback
+        # Translation Progress
         rx.cond(
             ReaderState.translation_loading,
             rx.el.div(
@@ -370,9 +401,9 @@ def split_reading_desk() -> rx.Component:
             ),
         ),
 
-        # Main Responsive Reading Area
+        # Split Reading Columns
         rx.el.div(
-            # Left: Original Document
+            # Left: Original
             rx.el.div(
                 rx.el.h2("ORIGINAL TEXT (CLICK TO SELECT)", class_name="text-[10px] font-bold tracking-widest text-[#3C7771] uppercase mb-4 sticky top-0 py-1 border-b backdrop-blur-sm"),
                 rx.foreach(
@@ -403,7 +434,7 @@ def split_reading_desk() -> rx.Component:
                 ),
             ),
 
-            # Right: Translation Column with Text-to-Speech (TTS)
+            # Right: Translation
             rx.el.div(
                 rx.el.h2("TRANSLATION (TARGET)", class_name="text-[10px] font-bold tracking-widest text-[#3C7771] uppercase mb-4 sticky top-0 py-1 border-b backdrop-blur-sm"),
                 rx.foreach(
@@ -501,6 +532,10 @@ def reading_desk() -> rx.Component:
             ReaderState.active_id != "",
             split_reading_desk(),
             rx.el.div(
+                rx.el.div(
+                    brand(),
+                    class_name="mb-6",
+                ),
                 rx.el.button(
                     rx.icon("menu", class_name="h-5 w-5 mr-2"),
                     "Open Shelf",
@@ -518,19 +553,35 @@ def reading_desk() -> rx.Component:
         ),
     )
 
-# Feature 1: Exporting button on writing desk
 def edit_workspace() -> rx.Component:
     return rx.el.div(
         rx.el.form(
             rx.el.div(
-                rx.el.h2("The Writing Desk", class_name="font-['Cormorant_Garamond'] text-2xl sm:text-3xl font-semibold"),
                 rx.el.div(
+                    brand(compact=True),
+                    rx.el.h2("The Writing Desk", class_name="font-['Cormorant_Garamond'] text-2xl sm:text-3xl font-semibold ml-3"),
+                    class_name="flex items-center",
+                ),
+                rx.el.div(
+                    rx.el.select(
+                        rx.el.option("Word (.docx)", value="docx"),
+                        rx.el.option("Text (.txt)", value="txt"),
+                        rx.el.option("Markdown (.md)", value="md"),
+                        rx.el.option("Print / PDF", value="pdf"),
+                        default_value=ReaderState.export_format_editor,
+                        on_change=ReaderState.set_export_format_editor,
+                        class_name=rx.cond(
+                            ReaderState.is_dark,
+                            "text-xs bg-neutral-800 border border-neutral-700 text-white rounded px-2 py-1.5",
+                            "text-xs bg-white border border-[#CBD5CA] text-neutral-800 rounded px-2 py-1.5",
+                        ),
+                    ),
                     rx.el.button(
                         rx.icon("download", class_name="h-3.5 w-3.5 mr-1"),
-                        "Export Text (.txt)",
+                        "Export",
                         type="button",
                         on_click=ReaderState.export_editor_text,
-                        class_name="text-xs bg-emerald-700 hover:bg-emerald-800 text-white px-3 py-1.5 rounded flex items-center font-medium cursor-pointer",
+                        class_name="text-xs bg-[#3C7771] hover:bg-[#2E605C] text-white px-3 py-1.5 rounded flex items-center font-medium cursor-pointer shadow-sm",
                     ),
                     rx.el.button(
                         "Back to Reader",
@@ -540,7 +591,7 @@ def edit_workspace() -> rx.Component:
                     ),
                     class_name="flex items-center gap-2",
                 ),
-                class_name="flex flex-col sm:flex-row gap-3 sm:items-center justify-between mb-4",
+                class_name="flex flex-col sm:flex-row gap-3 sm:items-center justify-between mb-4 pb-3 border-b border-neutral-300 dark:border-neutral-800",
             ),
             rx.el.input(
                 name="title",
