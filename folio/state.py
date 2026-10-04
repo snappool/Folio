@@ -184,6 +184,8 @@ class ReaderState(rx.State):
     selected_passage: int = -1
     is_dark: bool = False
     show_reader_window: bool = False
+    mobile_shelf_open: bool = False
+    mobile_view_tab: str = "split"  # Options: "original", "translation", "split"
     translations_cache: dict[str, str] = {}
     translation_loading: bool = False
     translation_status: str = ""
@@ -263,10 +265,18 @@ class ReaderState(rx.State):
     def toggle_reader_window(self):
         self.show_reader_window = not self.show_reader_window
 
+    def toggle_mobile_shelf(self):
+        self.mobile_shelf_open = not self.mobile_shelf_open
+
+    def close_mobile_shelf(self):
+        self.mobile_shelf_open = False
+
+    def set_mobile_tab(self, tab: str):
+        self.mobile_view_tab = tab
+
     def speak_text(self, text: str):
         if not text.strip():
             return
-        # Escape quotes/newlines for client-side JS evaluation
         safe_text = json.dumps(text.strip())
         target_lang = self.target_language
         lang_tag = f"{target_lang}-IN" if target_lang in ["ml", "hi", "ta", "te", "kn"] else target_lang
@@ -289,6 +299,40 @@ class ReaderState(rx.State):
         filename = f"{doc['title'].replace(' ', '_')}_{self.target_language}.txt"
         return rx.download(data=text, filename=filename)
 
+    # Feature 1: Exporting button on writing desk
+    def export_editor_text(self):
+        content = self.editor_text.strip()
+        name = (self.editor_title.strip() or "Untitled").replace(" ", "_")
+        return rx.download(data=content, filename=f"{name}.txt")
+
+    # Feature 3: New Document Creator
+    def create_new_document(self):
+        new_id = str(uuid.uuid4())
+        doc: DocumentData = {
+            "id": new_id,
+            "title": "Untitled Document",
+            "filename": "untitled.txt",
+            "format": "TXT",
+            "paragraphs": [""],
+            "page_data": [[""]],
+            "page_kind": "estimated",
+            "words": 0,
+            "pages": 1,
+            "minutes": 1,
+            "detected_language": "auto",
+            "detected_language_name": "Auto Detect",
+            "detection_error": "",
+        }
+        self.documents.append(doc)
+        self.active_id = new_id
+        self.current_page = 0
+        self.editing_id = new_id
+        self.editor_title = "Untitled Document"
+        self.editor_text = ""
+        self._persist()
+        self.mobile_shelf_open = False
+        return rx.redirect("/edit")
+
     def change_page(self, direction: int):
         nxt = self.current_page + direction
         if 0 <= nxt < self.active_document["pages"]:
@@ -300,6 +344,7 @@ class ReaderState(rx.State):
         self.current_page = 0
         self.selected_passage = -1
         self.translation_status = ""
+        self.mobile_shelf_open = False
 
     def remove_document(self, doc_id: str):
         self.documents = [d for d in self.documents if d["id"] != doc_id]
@@ -352,6 +397,7 @@ class ReaderState(rx.State):
 
         self._persist()
         self.is_loading = False
+        self.mobile_shelf_open = False
         yield rx.clear_selected_files("documents")
 
     def open_editor(self):
@@ -361,10 +407,16 @@ class ReaderState(rx.State):
         self.editor_text = "\n\n".join(doc["paragraphs"])
         return rx.redirect("/edit")
 
+    def set_editor_title(self, val: str):
+        self.editor_title = val
+
+    def set_editor_text(self, val: str):
+        self.editor_text = val
+
     def save_edit(self, form_data: dict[str, Any]):
-        title = form_data.get("title", "").strip()
-        text = _normalize(form_data.get("text", ""))
-        pages = _paginate(text)
+        title = form_data.get("title", "").strip() or self.editor_title.strip() or "Untitled Document"
+        text = _normalize(form_data.get("text", "") or self.editor_text)
+        pages = _paginate(text) if text else [[""]]
         paras = [p for page in pages for p in page]
         words = len(text.split())
 

@@ -20,17 +20,16 @@ def brand() -> rx.Component:
         class_name="flex items-center gap-3",
     )
 
-def shelf() -> rx.Component:
-    return rx.el.aside(
+def shelf_content() -> rx.Component:
+    return rx.el.div(
+        # Feature 3: New Document Button
         rx.el.div(
-            brand(),
-            class_name=rx.cond(
-                ReaderState.is_dark,
-                "hidden border-b border-neutral-800 px-6 py-6 lg:block",
-                "hidden border-b border-[#D9DDD4] px-6 py-6 lg:block",
+            rx.el.button(
+                rx.icon("plus", class_name="h-4 w-4 mr-1.5"),
+                "New Blank Document",
+                on_click=ReaderState.create_new_document,
+                class_name="w-full mb-3 rounded-sm bg-neutral-800 hover:bg-neutral-700 dark:bg-neutral-800 dark:hover:bg-neutral-700 text-white py-2 text-xs font-semibold flex items-center justify-center cursor-pointer border border-neutral-600 transition-colors shadow-sm",
             ),
-        ),
-        rx.el.div(
             rx.upload.root(
                 rx.el.div(
                     rx.icon("upload", class_name="mb-2 h-5 w-5 text-[#3C7771]"),
@@ -71,10 +70,11 @@ def shelf() -> rx.Component:
             ),
             class_name=rx.cond(
                 ReaderState.is_dark,
-                "px-6 py-4 border-b border-neutral-800",
-                "px-6 py-4 border-b border-[#D9DDD4]",
+                "px-5 py-4 border-b border-neutral-800",
+                "px-5 py-4 border-b border-[#D9DDD4]",
             ),
         ),
+        # Saved shelf list
         rx.el.div(
             rx.el.p("SAVED ON DISK", class_name="text-[10px] font-bold tracking-widest opacity-60 mb-3"),
             rx.foreach(
@@ -97,12 +97,54 @@ def shelf() -> rx.Component:
                     ),
                 ),
             ),
-            class_name="flex-1 overflow-y-auto px-6 py-4",
+            class_name="flex-1 overflow-y-auto px-5 py-4",
         ),
+        class_name="flex flex-col flex-1 h-full overflow-hidden",
+    )
+
+def shelf() -> rx.Component:
+    # Desktop shelf (visible on lg+)
+    return rx.el.aside(
+        rx.el.div(
+            brand(),
+            class_name=rx.cond(
+                ReaderState.is_dark,
+                "border-b border-neutral-800 px-6 py-6",
+                "border-b border-[#D9DDD4] px-6 py-6",
+            ),
+        ),
+        shelf_content(),
         class_name=rx.cond(
             ReaderState.is_dark,
-            "w-64 bg-neutral-900 border-r border-neutral-800 flex flex-col h-screen shrink-0 text-neutral-100",
-            "w-64 bg-[#F2F0E8] border-r border-[#D9DDD4] flex flex-col h-screen shrink-0 text-[#1D2A38]",
+            "hidden lg:flex w-72 bg-neutral-900 border-r border-neutral-800 flex-col h-screen shrink-0 text-neutral-100",
+            "hidden lg:flex w-72 bg-[#F2F0E8] border-r border-[#D9DDD4] flex-col h-screen shrink-0 text-[#1D2A38]",
+        ),
+    )
+
+def mobile_shelf_drawer() -> rx.Component:
+    # Mobile off-canvas drawer (visible when toggled on mobile)
+    return rx.cond(
+        ReaderState.mobile_shelf_open,
+        rx.el.div(
+            rx.el.div(
+                rx.el.div(
+                    brand(),
+                    rx.el.button(
+                        rx.icon("x", class_name="h-5 w-5"),
+                        on_click=ReaderState.close_mobile_shelf,
+                        class_name="p-1 rounded hover:bg-black/10 dark:hover:bg-white/10 cursor-pointer",
+                    ),
+                    class_name="flex items-center justify-between px-5 py-4 border-b border-neutral-300 dark:border-neutral-800",
+                ),
+                shelf_content(),
+                class_name=rx.cond(
+                    ReaderState.is_dark,
+                    "w-4/5 max-w-sm h-full bg-neutral-900 text-neutral-100 flex flex-col shadow-2xl z-50",
+                    "w-4/5 max-w-sm h-full bg-[#F2F0E8] text-[#1D2A38] flex flex-col shadow-2xl z-50",
+                ),
+            ),
+            on_click=ReaderState.close_mobile_shelf,
+            class_name="lg:hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex",
         ),
     )
 
@@ -135,8 +177,8 @@ def translated_reader_modal() -> rx.Component:
                     ),
                     class_name=rx.cond(
                         ReaderState.is_dark,
-                        "flex justify-between items-center pb-4 border-b border-neutral-800",
-                        "flex justify-between items-center pb-4 border-b border-[#D9DDD4]",
+                        "flex flex-col sm:flex-row gap-3 sm:items-center justify-between pb-4 border-b border-neutral-800",
+                        "flex flex-col sm:flex-row gap-3 sm:items-center justify-between pb-4 border-b border-[#D9DDD4]",
                     ),
                 ),
                 # Modal Content
@@ -171,8 +213,8 @@ def translated_reader_modal() -> rx.Component:
                 ),
                 class_name=rx.cond(
                     ReaderState.is_dark,
-                    "relative flex flex-col w-full max-w-4xl max-h-[85vh] bg-neutral-900 border border-neutral-800 text-neutral-100 rounded-lg p-6 shadow-2xl",
-                    "relative flex flex-col w-full max-w-4xl max-h-[85vh] bg-[#FCFAF5] border border-[#D9DDD4] text-[#1D2A38] rounded-lg p-6 shadow-2xl",
+                    "relative flex flex-col w-full max-w-4xl max-h-[85vh] bg-neutral-900 border border-neutral-800 text-neutral-100 rounded-lg p-5 sm:p-6 shadow-2xl",
+                    "relative flex flex-col w-full max-w-4xl max-h-[85vh] bg-[#FCFAF5] border border-[#D9DDD4] text-[#1D2A38] rounded-lg p-5 sm:p-6 shadow-2xl",
                 ),
             ),
             class_name="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4",
@@ -181,57 +223,60 @@ def translated_reader_modal() -> rx.Component:
 
 def split_reading_desk() -> rx.Component:
     return rx.el.div(
-        # Top Header Bar: Document Title, Light/Dark Toggle, Reader Window Button
+        # Mobile Top Bar (with Shelf Hamburger & Quick Title)
         rx.el.div(
-            rx.el.div(
-                rx.el.h1(ReaderState.active_document["title"], class_name="text-3xl font-['Cormorant_Garamond'] font-semibold"),
-                rx.el.span(f"{ReaderState.active_document['words']} words · Page {ReaderState.current_page + 1} of {ReaderState.active_document['pages']}", class_name="text-xs opacity-60"),
-                class_name="flex flex-col gap-1",
+            rx.el.button(
+                rx.icon("menu", class_name="h-5 w-5"),
+                on_click=ReaderState.toggle_mobile_shelf,
+                class_name="lg:hidden p-2 rounded border border-neutral-300 dark:border-neutral-700 cursor-pointer mr-2",
+                title="Open Shelf",
             ),
             rx.el.div(
-                # Clean Light / Dark Toggle
+                rx.el.h1(ReaderState.active_document["title"], class_name="text-2xl sm:text-3xl font-['Cormorant_Garamond'] font-semibold truncate"),
+                rx.el.span(f"{ReaderState.active_document['words']} words · Page {ReaderState.current_page + 1} of {ReaderState.active_document['pages']}", class_name="text-xs opacity-60"),
+                class_name="flex flex-col min-w-0 flex-1",
+            ),
+            rx.el.div(
                 rx.el.button(
                     rx.cond(ReaderState.is_dark, rx.icon("sun", class_name="h-4 w-4"), rx.icon("moon", class_name="h-4 w-4")),
                     on_click=ReaderState.toggle_theme,
                     class_name=rx.cond(
                         ReaderState.is_dark,
-                        "p-2 rounded border border-neutral-700 hover:bg-neutral-800 text-yellow-400 cursor-pointer",
-                        "p-2 rounded border border-[#CBD5CA] hover:bg-[#EAE8DF] text-neutral-700 cursor-pointer",
+                        "p-2 rounded border border-neutral-700 hover:bg-neutral-800 text-yellow-400 cursor-pointer shrink-0",
+                        "p-2 rounded border border-[#CBD5CA] hover:bg-[#EAE8DF] text-neutral-700 cursor-pointer shrink-0",
                     ),
                     title="Toggle Theme",
                 ),
-                # Dedicated Reader Window Button
                 rx.el.button(
-                    rx.icon("maximize-2", class_name="h-3.5 w-3.5 mr-1.5"),
-                    "Reader Window",
+                    rx.icon("maximize-2", class_name="h-3.5 w-3.5 sm:mr-1.5"),
+                    rx.el.span("Reader", class_name="hidden sm:inline"),
                     on_click=ReaderState.toggle_reader_window,
-                    class_name="bg-[#3C7771] hover:bg-[#2E605C] text-white text-xs px-3 py-1.5 rounded font-semibold flex items-center cursor-pointer shadow-sm",
+                    class_name="bg-[#3C7771] hover:bg-[#2E605C] text-white text-xs px-2.5 sm:px-3 py-1.5 rounded font-semibold flex items-center cursor-pointer shadow-sm shrink-0",
                 ),
                 rx.el.button(
                     "Edit",
                     on_click=ReaderState.open_editor,
                     class_name=rx.cond(
                         ReaderState.is_dark,
-                        "text-xs border border-neutral-700 px-3 py-1.5 rounded hover:bg-neutral-800",
-                        "text-xs border border-[#CBD5CA] px-3 py-1.5 rounded hover:bg-[#EAE8DF]",
+                        "text-xs border border-neutral-700 px-2.5 sm:px-3 py-1.5 rounded hover:bg-neutral-800 shrink-0",
+                        "text-xs border border-[#CBD5CA] px-2.5 sm:px-3 py-1.5 rounded hover:bg-[#EAE8DF] shrink-0",
                     ),
                 ),
-                rx.el.button("A-", on_click=ReaderState.decrease_font, class_name=rx.cond(ReaderState.is_dark, "px-2 py-1 border border-neutral-700 text-xs rounded", "px-2 py-1 border border-[#CBD5CA] text-xs rounded")),
-                rx.el.button("A+", on_click=ReaderState.increase_font, class_name=rx.cond(ReaderState.is_dark, "px-2 py-1 border border-neutral-700 text-xs rounded", "px-2 py-1 border border-[#CBD5CA] text-xs rounded")),
-                rx.el.button("Spacing", on_click=ReaderState.cycle_spacing, class_name=rx.cond(ReaderState.is_dark, "px-2 py-1 border border-neutral-700 text-xs rounded", "px-2 py-1 border border-[#CBD5CA] text-xs rounded")),
-                class_name="flex items-center gap-2",
+                rx.el.button("A-", on_click=ReaderState.decrease_font, class_name=rx.cond(ReaderState.is_dark, "px-2 py-1 border border-neutral-700 text-xs rounded shrink-0", "px-2 py-1 border border-[#CBD5CA] text-xs rounded shrink-0")),
+                rx.el.button("A+", on_click=ReaderState.increase_font, class_name=rx.cond(ReaderState.is_dark, "px-2 py-1 border border-neutral-700 text-xs rounded shrink-0", "px-2 py-1 border border-[#CBD5CA] text-xs rounded shrink-0")),
+                class_name="flex items-center gap-1.5 sm:gap-2 flex-wrap justify-end",
             ),
             class_name=rx.cond(
                 ReaderState.is_dark,
-                "flex justify-between items-center pb-4 mb-4 border-b border-neutral-800",
-                "flex justify-between items-center pb-4 mb-4 border-b border-[#D9DDD4]",
+                "flex items-center justify-between pb-4 mb-4 border-b border-neutral-800 gap-2",
+                "flex items-center justify-between pb-4 mb-4 border-b border-[#D9DDD4] gap-2",
             ),
         ),
 
         # Action bar: Target Language & Translation Triggers
         rx.el.div(
             rx.el.div(
-                rx.el.span("Translate to:", class_name="text-xs font-bold opacity-60"),
+                rx.el.span("Translate to:", class_name="text-xs font-bold opacity-60 hidden sm:inline"),
                 rx.el.select(
                     rx.foreach(ReaderState.languages, lambda l: rx.el.option(l["name"], value=l["code"])),
                     default_value=ReaderState.target_language,
@@ -247,32 +292,64 @@ def split_reading_desk() -> rx.Component:
             rx.el.div(
                 rx.el.button(
                     rx.icon("text-select", class_name="h-4 w-4 mr-1"),
-                    "Translate Selected Passage",
+                    "Passage",
                     on_click=ReaderState.translate_selected_passage,
                     disabled=ReaderState.translation_loading,
                     class_name=rx.cond(
                         ReaderState.is_dark,
-                        "bg-neutral-900 border border-[#3C7771] text-[#4DA097] px-3 py-1.5 text-xs font-semibold rounded hover:bg-neutral-800 flex items-center cursor-pointer disabled:opacity-40",
-                        "bg-white border border-[#3C7771] text-[#3C7771] px-3 py-1.5 text-xs font-semibold rounded hover:bg-[#3C7771]/10 flex items-center cursor-pointer disabled:opacity-40",
+                        "bg-neutral-900 border border-[#3C7771] text-[#4DA097] px-2.5 sm:px-3 py-1.5 text-xs font-semibold rounded hover:bg-neutral-800 flex items-center cursor-pointer disabled:opacity-40",
+                        "bg-white border border-[#3C7771] text-[#3C7771] px-2.5 sm:px-3 py-1.5 text-xs font-semibold rounded hover:bg-[#3C7771]/10 flex items-center cursor-pointer disabled:opacity-40",
                     ),
                 ),
                 rx.el.button(
                     rx.icon("book-open", class_name="h-4 w-4 mr-1"),
-                    "Translate This Page",
+                    "Entire Page",
                     on_click=ReaderState.translate_entire_page,
                     disabled=ReaderState.translation_loading,
-                    class_name="bg-[#3C7771] text-white px-3 py-1.5 text-xs font-semibold rounded hover:bg-[#2E605C] flex items-center cursor-pointer disabled:opacity-40",
+                    class_name="bg-[#3C7771] text-white px-2.5 sm:px-3 py-1.5 text-xs font-semibold rounded hover:bg-[#2E605C] flex items-center cursor-pointer disabled:opacity-40",
                 ),
-                class_name="flex items-center gap-3",
+                class_name="flex items-center gap-2 sm:gap-3",
             ),
             class_name=rx.cond(
                 ReaderState.is_dark,
-                "flex justify-between items-center p-3 bg-neutral-900 border border-neutral-800 rounded mb-3",
-                "flex justify-between items-center p-3 bg-[#FCFAF5] border border-[#CBD5CA] rounded mb-3",
+                "flex flex-wrap justify-between items-center p-3 bg-neutral-900 border border-neutral-800 rounded mb-3 gap-2",
+                "flex flex-wrap justify-between items-center p-3 bg-[#FCFAF5] border border-[#CBD5CA] rounded mb-3 gap-2",
             ),
         ),
 
-        # Live status
+        # Feature 2: Mobile View Switcher (Original / Translation / Split)
+        rx.el.div(
+            rx.el.button(
+                "Split View",
+                on_click=lambda: ReaderState.set_mobile_tab("split"),
+                class_name=rx.cond(
+                    ReaderState.mobile_view_tab == "split",
+                    "flex-1 py-1 text-xs font-semibold rounded bg-[#3C7771] text-white",
+                    "flex-1 py-1 text-xs opacity-75 hover:opacity-100",
+                ),
+            ),
+            rx.el.button(
+                "Original",
+                on_click=lambda: ReaderState.set_mobile_tab("original"),
+                class_name=rx.cond(
+                    ReaderState.mobile_view_tab == "original",
+                    "flex-1 py-1 text-xs font-semibold rounded bg-[#3C7771] text-white",
+                    "flex-1 py-1 text-xs opacity-75 hover:opacity-100",
+                ),
+            ),
+            rx.el.button(
+                "Translation",
+                on_click=lambda: ReaderState.set_mobile_tab("translation"),
+                class_name=rx.cond(
+                    ReaderState.mobile_view_tab == "translation",
+                    "flex-1 py-1 text-xs font-semibold rounded bg-[#3C7771] text-white",
+                    "flex-1 py-1 text-xs opacity-75 hover:opacity-100",
+                ),
+            ),
+            class_name="lg:hidden flex items-center p-1 rounded border border-neutral-300 dark:border-neutral-800 bg-black/5 dark:bg-white/5 mb-3 gap-1",
+        ),
+
+        # Live translation feedback
         rx.cond(
             ReaderState.translation_loading,
             rx.el.div(
@@ -293,7 +370,7 @@ def split_reading_desk() -> rx.Component:
             ),
         ),
 
-        # 50/50 Split Reading Container
+        # Main Responsive Reading Area
         rx.el.div(
             # Left: Original Document
             rx.el.div(
@@ -319,7 +396,11 @@ def split_reading_desk() -> rx.Component:
                         ),
                     ),
                 ),
-                class_name="flex-1 w-1/2 overflow-y-auto pr-3",
+                class_name=rx.cond(
+                    (ReaderState.mobile_view_tab == "original") | (ReaderState.mobile_view_tab == "split"),
+                    "flex-1 w-full lg:w-1/2 overflow-y-auto pr-0 lg:pr-3",
+                    "hidden lg:block lg:flex-1 lg:w-1/2 overflow-y-auto lg:pr-3",
+                ),
             ),
 
             # Right: Translation Column with Text-to-Speech (TTS)
@@ -362,20 +443,20 @@ def split_reading_desk() -> rx.Component:
                     ),
                 ),
                 class_name=rx.cond(
-                    ReaderState.is_dark,
-                    "flex-1 w-1/2 overflow-y-auto pl-3 border-l border-neutral-800",
-                    "flex-1 w-1/2 overflow-y-auto pl-3 border-l border-[#D9DDD4]",
+                    (ReaderState.mobile_view_tab == "translation") | (ReaderState.mobile_view_tab == "split"),
+                    "flex-1 w-full lg:w-1/2 overflow-y-auto pl-0 lg:pl-3 border-t lg:border-t-0 lg:border-l border-neutral-300 dark:border-neutral-800 pt-4 lg:pt-0 mt-4 lg:mt-0",
+                    "hidden lg:block lg:flex-1 lg:w-1/2 overflow-y-auto lg:pl-3 lg:border-l border-neutral-300 dark:border-neutral-800",
                 ),
             ),
             class_name=rx.cond(
                 ReaderState.is_dark,
-                "flex flex-1 min-h-[500px] border border-neutral-800 rounded p-4 bg-neutral-950",
-                "flex flex-1 min-h-[500px] border border-[#D9DDD4] rounded p-4 bg-[#F7F4EC]",
+                "flex flex-col lg:flex-row flex-1 min-h-[500px] border border-neutral-800 rounded p-4 bg-neutral-950",
+                "flex flex-col lg:flex-row flex-1 min-h-[500px] border border-[#D9DDD4] rounded p-4 bg-[#F7F4EC]",
             ),
             style={"fontSize": f"{ReaderState.font_size}px"},
         ),
 
-        # Pagination Footer (with pb-14 and extra z-index to clear Reflex badge)
+        # Pagination Footer
         rx.el.div(
             rx.el.button(
                 "Previous Page",
@@ -407,18 +488,28 @@ def split_reading_desk() -> rx.Component:
         translated_reader_modal(),
         class_name=rx.cond(
             ReaderState.is_dark,
-            "flex flex-col flex-1 h-screen overflow-y-auto px-8 py-6 pb-16 bg-neutral-950 text-neutral-100",
-            "flex flex-col flex-1 h-screen overflow-y-auto px-8 py-6 pb-16 bg-[#F7F4EC] text-[#1D2A38]",
+            "flex flex-col flex-1 h-screen overflow-y-auto px-4 sm:px-8 py-4 sm:py-6 pb-16 bg-neutral-950 text-neutral-100",
+            "flex flex-col flex-1 h-screen overflow-y-auto px-4 sm:px-8 py-4 sm:py-6 pb-16 bg-[#F7F4EC] text-[#1D2A38]",
         ),
     )
 
 def reading_desk() -> rx.Component:
     return rx.el.div(
         shelf(),
+        mobile_shelf_drawer(),
         rx.cond(
             ReaderState.active_id != "",
             split_reading_desk(),
-            rx.el.div("Upload or select a document from the left shelf to begin reading.", class_name="p-16 opacity-60 flex-1"),
+            rx.el.div(
+                rx.el.button(
+                    rx.icon("menu", class_name="h-5 w-5 mr-2"),
+                    "Open Shelf",
+                    on_click=ReaderState.toggle_mobile_shelf,
+                    class_name="lg:hidden flex items-center mb-6 px-3 py-2 rounded border border-neutral-400 dark:border-neutral-700 text-xs font-semibold",
+                ),
+                rx.el.p("Upload or select a document from the shelf to begin reading.", class_name="opacity-60"),
+                class_name="p-8 sm:p-16 flex-1",
+            ),
         ),
         class_name=rx.cond(
             ReaderState.is_dark,
@@ -427,19 +518,51 @@ def reading_desk() -> rx.Component:
         ),
     )
 
+# Feature 1: Exporting button on writing desk
 def edit_workspace() -> rx.Component:
     return rx.el.div(
         rx.el.form(
             rx.el.div(
-                rx.el.h2("The Writing Desk", class_name="font-['Cormorant_Garamond'] text-3xl font-semibold"),
-                rx.el.button("Back to Reader", on_click=rx.redirect("/"), type="button", class_name="text-xs border px-3 py-1.5 rounded"),
-                class_name="flex items-center justify-between mb-4",
+                rx.el.h2("The Writing Desk", class_name="font-['Cormorant_Garamond'] text-2xl sm:text-3xl font-semibold"),
+                rx.el.div(
+                    rx.el.button(
+                        rx.icon("download", class_name="h-3.5 w-3.5 mr-1"),
+                        "Export Text (.txt)",
+                        type="button",
+                        on_click=ReaderState.export_editor_text,
+                        class_name="text-xs bg-emerald-700 hover:bg-emerald-800 text-white px-3 py-1.5 rounded flex items-center font-medium cursor-pointer",
+                    ),
+                    rx.el.button(
+                        "Back to Reader",
+                        on_click=rx.redirect("/"),
+                        type="button",
+                        class_name="text-xs border px-3 py-1.5 rounded hover:bg-black/5 dark:hover:bg-white/5",
+                    ),
+                    class_name="flex items-center gap-2",
+                ),
+                class_name="flex flex-col sm:flex-row gap-3 sm:items-center justify-between mb-4",
             ),
-            rx.el.input(name="title", default_value=ReaderState.editor_title, class_name="w-full text-xl font-bold p-3 border rounded mb-4 font-['Cormorant_Garamond'] bg-transparent"),
-            rx.el.textarea(name="text", default_value=ReaderState.editor_text, class_name="w-full h-[60vh] p-4 border rounded font-['Cormorant_Garamond'] text-lg leading-relaxed mb-4 bg-transparent"),
-            rx.el.button("Save changes", type="submit", class_name="bg-[#3C7771] text-white px-5 py-2.5 rounded text-xs font-semibold hover:bg-[#2E605C] cursor-pointer"),
+            rx.el.input(
+                name="title",
+                value=ReaderState.editor_title,
+                on_change=ReaderState.set_editor_title,
+                placeholder="Document Title...",
+                class_name="w-full text-xl font-bold p-3 border rounded mb-4 font-['Cormorant_Garamond'] bg-transparent",
+            ),
+            rx.el.textarea(
+                name="text",
+                value=ReaderState.editor_text,
+                on_change=ReaderState.set_editor_text,
+                placeholder="Type or paste your text here...",
+                class_name="w-full h-[60vh] p-4 border rounded font-['Cormorant_Garamond'] text-lg leading-relaxed mb-4 bg-transparent",
+            ),
+            rx.el.button(
+                "Save changes",
+                type="submit",
+                class_name="bg-[#3C7771] text-white px-5 py-2.5 rounded text-xs font-semibold hover:bg-[#2E605C] cursor-pointer shadow-sm",
+            ),
             on_submit=ReaderState.save_edit,
-            class_name="max-w-4xl mx-auto p-8",
+            class_name="max-w-4xl mx-auto p-4 sm:p-8",
         ),
         class_name=rx.cond(
             ReaderState.is_dark,
