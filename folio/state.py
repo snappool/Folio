@@ -13,7 +13,6 @@ from docx import Document as WordDocument
 from ebooklib import ITEM_DOCUMENT, epub
 import httpx
 import markdown
-from pypdf import PdfReader
 import reflex as rx
 
 LANGUAGES = [
@@ -34,23 +33,20 @@ LANGUAGES = [
     {"code": "ja", "name": "Japanese"},
 ]
 
-class DocumentData(TypedDict):
+# Backend storage for full page text to keep WebSocket payload tiny
+_DOCUMENT_STORE: dict[str, list[list[str]]] = {}
+
+class DocumentMeta(TypedDict):
     id: str
     title: str
     filename: str
     format: str
-    paragraphs: list[str]
-    page_data: list[list[str]]
-    page_kind: str
     words: int
     pages: int
     minutes: int
-    detected_language: str
-    detected_language_name: str
-    detection_error: str
 
 _HTTP_CLIENT = httpx.AsyncClient(
-    timeout=6.0,
+    timeout=15.0,
     headers={
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
     },
@@ -137,15 +133,55 @@ def _paginate(text: str) -> list[list[str]]:
                 current, count = [], 0
     if current:
         pages.append(current)
-    return pages
+    return pages or [[""]]
 
-def _extract(data: bytes, suffix: str) -> tuple[list[list[str]], str]:
+def _extract_pages_fast(data: bytes, suffix: str) -> list[list[str]]:
+    """Extracts text rapidly without blocking UI loops."""
     if suffix == ".pdf":
+        # try:
+        #     import fitz  # PyMuPDF: C-accelerated
+        #     doc = fitz.open(stream=data, filetype="pdf")
+        #     pages = []
+        #     for page in doc:
+        #         t = page.get_text().strip()
+        #         if t:
+        #             paras = [p.strip() for p in re.split(r"\n\s*\n", t) if p.strip()]
+        #             if paras:
+        #                 pages.append(paras)
+        #     doc.close()
+        #     if pages:
+        #         return pages
+        # except Exception:
+        #     pass
+        try:
+            import pymupdf  # Changed from fitz
+            doc = pymupdf.open(stream=data, filetype="pdf")  # Changed from fitz.open
+            pages = []
+            for page in doc:
+                t = page.get_text().strip()
+                if t:
+                    paras = [p.strip() for p in re.split(r"\n\s*\n", t) if p.strip()]
+                    if paras:
+                        pages.append(paras)
+            doc.close()
+            if pages:
+                return pages
+        except Exception:
+            pass
+
+        from pypdf import PdfReader
         reader = PdfReader(io.BytesIO(data))
-        pages = [_paragraphs(_normalize(p.extract_text() or "")) for p in reader.pages]
-        if not any(pages):
+        pages = []
+        for p in reader.pages:
+            t = _normalize(p.extract_text() or "")
+            if t:
+                paras = _paragraphs(t)
+                if paras:
+                    pages.append(paras)
+        if not pages:
             raise ValueError("No readable text found in PDF.")
-        return pages, "pdf"
+        return pages
+
     elif suffix == ".docx":
         doc = WordDocument(io.BytesIO(data))
         text = _normalize("\n\n".join(p.text for p in doc.paragraphs if p.text))
@@ -160,9 +196,10 @@ def _extract(data: bytes, suffix: str) -> tuple[list[list[str]], str]:
         text = _html_to_text(markdown.markdown(_decode_text(data)))
     else:
         text = _normalize(_decode_text(data))
+
     if not text:
         raise ValueError("File contains no readable text.")
-    return _paginate(text), "estimated"
+    return _paginate(text)
 
 def _build_docx(title: str, text: str) -> bytes:
     doc = WordDocument()
@@ -176,14 +213,13 @@ def _build_docx(title: str, text: str) -> bytes:
     return bio.getvalue()
 
 class ReaderState(rx.State):
-    # Standard Python collections per user session
-    documents: list[DocumentData] = []
+    documents: list[DocumentMeta] = []
+    current_page_paragraphs: list[str] = []
     translations_cache: dict[str, str] = {}
 
     active_id: str = ""
     error_message: str = ""
     is_loading: bool = False
-    progress: int = 0
     font_size: int = 18
     line_spacing: str = "Relaxed"
     reading_width: str = "Comfortable"
@@ -206,45 +242,38 @@ class ReaderState(rx.State):
 
     def load_library(self):
         if self.documents and not self.active_id:
-            self.active_id = self.documents[0]["id"]
+            self.select_document(self.documents[0]["id"])
 
     @rx.var
-    def active_document(self) -> DocumentData:
-        default_doc: DocumentData = {
+    def active_document(self) -> DocumentMeta:
+        default_meta: DocumentMeta = {
             "id": "",
             "title": "",
             "filename": "",
             "format": "",
-            "paragraphs": [],
-            "page_data": [],
-            "page_kind": "estimated",
             "words": 0,
             "pages": 0,
             "minutes": 0,
-            "detected_language": "auto",
-            "detected_language_name": "Auto Detect",
-            "detection_error": "",
         }
         for doc in self.documents:
             if doc.get("id") == self.active_id:
                 return doc
-        return default_doc
+        return default_meta
 
     @rx.var
     def visible_paragraphs(self) -> list[str]:
-        pages = self.active_document.get("page_data", [])
-        return pages[self.current_page] if 0 <= self.current_page < len(pages) else []
+        return self.current_page_paragraphs
 
     @rx.var
     def page_start(self) -> int:
-        pages = self.active_document.get("page_data", [])
+        pages = _DOCUMENT_STORE.get(self.active_id, [])
         return sum(len(page) for page in pages[:self.current_page])
 
     @rx.var
     def visible_translations(self) -> list[str]:
         paras = self.visible_paragraphs
         start = self.page_start
-        doc_id = self.active_document.get("id", "")
+        doc_id = self.active_id
         res = []
         for idx in range(len(paras)):
             key = f"{doc_id}:{start + idx}"
@@ -252,18 +281,25 @@ class ReaderState(rx.State):
         return res
 
     @rx.var
-    def full_translated_document_text(self) -> str:
-        doc = self.active_document
-        paras = doc.get("paragraphs", [])
+    def current_page_translated_text(self) -> str:
+        paras = self.visible_paragraphs
+        start = self.page_start
+        doc_id = self.active_id
         if not paras:
             return ""
-        doc_id = doc.get("id", "")
         out = []
         for idx, p in enumerate(paras):
-            key = f"{doc_id}:{idx}"
+            key = f"{doc_id}:{start + idx}"
             trans = self.translations_cache.get(key)
             out.append(trans.strip() if trans and trans.strip() else f"[{p}]")
         return "\n\n".join(out)
+
+    def _sync_current_page(self):
+        pages = _DOCUMENT_STORE.get(self.active_id, [])
+        if 0 <= self.current_page < len(pages):
+            self.current_page_paragraphs = pages[self.current_page]
+        else:
+            self.current_page_paragraphs = []
 
     def toggle_theme(self):
         self.is_dark = not self.is_dark
@@ -305,10 +341,10 @@ class ReaderState(rx.State):
 
     def export_translation_from_reader(self):
         doc = self.active_document
-        text = self.full_translated_document_text
+        text = self.current_page_translated_text
         if not text:
             return
-        title = f"{doc.get('title', 'Document')}_{self.target_language.upper()}"
+        title = f"{doc.get('title', 'Document')}_P{self.current_page + 1}_{self.target_language.upper()}"
         clean_name = title.replace(" ", "_")
 
         fmt = self.export_format_reader
@@ -342,24 +378,20 @@ class ReaderState(rx.State):
 
     def create_new_document(self):
         new_id = str(uuid.uuid4())
-        doc: DocumentData = {
+        doc: DocumentMeta = {
             "id": new_id,
             "title": "Untitled Document",
             "filename": "untitled.txt",
             "format": "TXT",
-            "paragraphs": [""],
-            "page_data": [[""]],
-            "page_kind": "estimated",
             "words": 0,
             "pages": 1,
             "minutes": 1,
-            "detected_language": "auto",
-            "detected_language_name": "Auto Detect",
-            "detection_error": "",
         }
+        _DOCUMENT_STORE[new_id] = [[""]]
         self.documents.append(doc)
         self.active_id = new_id
         self.current_page = 0
+        self._sync_current_page()
         self.editing_id = new_id
         self.editor_title = "Untitled Document"
         self.editor_text = ""
@@ -371,100 +403,101 @@ class ReaderState(rx.State):
         total_pages = self.active_document.get("pages", 1)
         if 0 <= nxt < total_pages:
             self.current_page = nxt
+            self._sync_current_page()
             self.selected_passage = -1
 
     def select_document(self, doc_id: str):
         self.active_id = doc_id
         self.current_page = 0
+        self._sync_current_page()
         self.selected_passage = -1
         self.translation_status = ""
         self.mobile_shelf_open = False
 
     def remove_document(self, doc_id: str):
         self.documents = [d for d in self.documents if d.get("id") != doc_id]
+        _DOCUMENT_STORE.pop(doc_id, None)
         if self.active_id == doc_id:
             if self.documents:
                 self.select_document(self.documents[-1]["id"])
             else:
                 self.active_id = ""
                 self.current_page = 0
+                self.current_page_paragraphs = []
 
     async def handle_upload(self, files: list[rx.UploadFile]):
         if not files:
+            self.error_message = "No file selected."
             return
         self.is_loading = True
         self.error_message = ""
         yield
 
+        new_docs = list(self.documents)
         last_id = ""
+
         for file in files:
             name = Path(file.filename or "file").name
             suffix = Path(name).suffix.lower()
             try:
                 data = await file.read()
-                pages, kind = _extract(data, suffix)
-                paras = [p for page in pages for p in page]
-                words = len("\n\n".join(paras).split())
+                # Run accelerated extraction in background thread
+                pages = await asyncio.to_thread(_extract_pages_fast, data, suffix)
+                total_words = sum(len(p.split()) for page in pages for p in page)
+
                 doc_id = str(uuid.uuid4())
-                doc: DocumentData = {
+                _DOCUMENT_STORE[doc_id] = pages
+
+                doc: DocumentMeta = {
                     "id": doc_id,
                     "title": Path(name).stem.replace("_", " ").title(),
                     "filename": name,
                     "format": suffix.lstrip(".").upper(),
-                    "paragraphs": paras,
-                    "page_data": pages,
-                    "page_kind": kind,
-                    "words": words,
+                    "words": total_words,
                     "pages": len(pages),
-                    "minutes": max(1, math.ceil(words / 220)),
-                    "detected_language": "auto",
-                    "detected_language_name": "Auto Detect",
-                    "detection_error": "",
+                    "minutes": max(1, math.ceil(total_words / 220)),
                 }
-                self.documents.append(doc)
+                new_docs.append(doc)
                 last_id = doc_id
             except Exception as e:
                 self.error_message = f"{name}: {str(e)}"
                 print(f"[Upload Error]: {e}")
 
+        self.documents = new_docs
+        self.is_loading = False
         if last_id:
             self.select_document(last_id)
+            self.mobile_shelf_open = False
 
-        self.is_loading = False
-        self.mobile_shelf_open = False
         yield rx.clear_selected_files("documents")
 
     def open_editor(self):
         doc = self.active_document
+        pages = _DOCUMENT_STORE.get(doc.get("id", ""), [])
+        all_text = "\n\n".join(p for page in pages for p in page)
         self.editing_id = doc.get("id", "")
         self.editor_title = doc.get("title", "")
-        self.editor_text = "\n\n".join(doc.get("paragraphs", []))
+        self.editor_text = all_text
         return rx.redirect("/edit")
 
-    def set_editor_title(self, val: str):
-        self.editor_title = val
-
-    def set_editor_text(self, val: str):
-        self.editor_text = val
-
     def save_edit(self, form_data: dict[str, Any]):
-        title = form_data.get("title", "").strip() or self.editor_title.strip() or "Untitled Document"
-        text = _normalize(form_data.get("text", "") or self.editor_text)
+        title = form_data.get("title", "").strip() or "Untitled Document"
+        text = _normalize(form_data.get("text", "") or "")
         pages = _paginate(text) if text else [[""]]
-        paras = [p for page in pages for p in page]
         words = len(text.split())
+
+        _DOCUMENT_STORE[self.editing_id] = pages
 
         for i, doc in enumerate(self.documents):
             if doc.get("id") == self.editing_id:
                 self.documents[i].update({
                     "title": title,
-                    "paragraphs": paras,
-                    "page_data": pages,
                     "words": words,
                     "pages": len(pages),
                     "minutes": max(1, math.ceil(words / 220)),
                 })
                 break
+        self._sync_current_page()
         return rx.redirect("/")
 
     def select_passage(self, index: int):
@@ -475,8 +508,9 @@ class ReaderState(rx.State):
         self.target_language = code
 
     async def translate_selected_passage(self):
-        paras = self.active_document.get("paragraphs", [])
-        if self.selected_passage < 0 or self.selected_passage >= len(paras):
+        paras = self.visible_paragraphs
+        local_idx = self.selected_passage - self.page_start
+        if local_idx < 0 or local_idx >= len(paras):
             self.translation_status = "⚠️ Click a passage on the left to select it."
             return
 
@@ -485,7 +519,7 @@ class ReaderState(rx.State):
         yield
 
         target = self.target_language
-        text = paras[self.selected_passage]
+        text = paras[local_idx]
         translated = await _fast_google_translate(text, target)
 
         self.translations_cache[f"{self.active_id}:{self.selected_passage}"] = translated
@@ -493,7 +527,7 @@ class ReaderState(rx.State):
         self.translation_status = "✅ Done."
 
     async def translate_entire_page(self):
-        paras = self.active_document.get("paragraphs", [])
+        paras = self.visible_paragraphs
         if not paras:
             return
 
@@ -503,22 +537,20 @@ class ReaderState(rx.State):
 
         target = self.target_language
         start_idx = self.page_start
-        end_idx = min(len(paras), start_idx + len(self.visible_paragraphs))
-
-        page_paras = [paras[i] for i in range(start_idx, end_idx)]
+        end_idx = start_idx + len(paras)
         indices = list(range(start_idx, end_idx))
 
         delimiter = "\n\n§§§\n\n"
-        combined = delimiter.join(page_paras)
+        combined = delimiter.join(paras)
 
         result = await _fast_google_translate(combined, target)
         parts = [p.strip() for p in result.split("§§§")]
 
-        if len(parts) == len(page_paras):
+        if len(parts) == len(paras):
             for idx, text in zip(indices, parts):
                 self.translations_cache[f"{self.active_id}:{idx}"] = text
         else:
-            tasks = [_fast_google_translate(p, target) for p in page_paras]
+            tasks = [_fast_google_translate(p, target) for p in paras]
             results = await asyncio.gather(*tasks)
             for idx, text in zip(indices, results):
                 self.translations_cache[f"{self.active_id}:{idx}"] = text
